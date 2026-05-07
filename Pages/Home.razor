@@ -1,0 +1,888 @@
+@page "/"
+@using Expero.AcroFormEditor.Models
+@using Expero.AcroFormEditor.Services
+@inject AcroFormService FormService
+@inject AutoGroupService GroupService
+@inject IJSRuntime JS
+
+<div class="app-shell">
+    @if (isUploading)
+    {
+        <div class="progress-overlay">
+            <div class="progress-card">
+                <div class="spinner large"></div>
+                <h3>Reading PDF...</h3>
+                <p>Analyzing AcroForm fields and hierarchies</p>
+            </div>
+        </div>
+    }
+    <header class="o365-header">
+        <div class="header-left">
+            <svg class="app-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5" fill="none" />
+                <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5" />
+                <path d="M9 13h6M9 17h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+            <span class="app-title">Expero AcroForm Editor</span>
+        </div>
+        @if (fields.Any())
+        {
+            <div class="header-actions">
+                <div class="btn-group-fluent">
+                    <button class="btn-o365 btn-accent" @onclick="RunAutoGroup" title="Run full auto-grouping">
+                        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h5v2H2V3zm7 0h5v2H9V3zM2 7h5v2H2V7zm7 0h5v2H9V7zM2 11h5v2H2v-2zm7 0h5v2H9v-2z" /></svg>
+                        <span>Full Auto</span>
+                    </button>
+                    <button class="btn-o365 btn-accent btn-outline" @onclick="AutoSetPrimaries" title="Auto-set potential primaries">
+                        <svg viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="4" width="12" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" /><path d="M4 11v2m4-2v2m4-2v2" stroke="currentColor" stroke-width="1.2" /></svg>
+                        <span>Set Primaries</span>
+                    </button>
+                    <button class="btn-o365 btn-accent btn-outline" @onclick="AutoAddReferences" title="Auto-link references to primaries">
+                        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 3h10v2H3V3zm3 5h7v2H6V8zm0 4h7v2H6v-2zM3 8h2v6H3V8z" /></svg>
+                        <span>Link References</span>
+                    </button>
+                </div>
+
+                <button class="btn-o365 btn-secondary btn-outline" @onclick="DownloadFieldPreview" disabled="@isProcessing" title="Fill all text fields with their name in red and download">
+                    @if (isProcessing)
+                    {
+                        <span class="spinner"></span>
+                        <span>Processing…</span>
+                    }
+                    else
+                    {
+                        <svg viewBox="0 0 16 16" fill="currentColor">
+                            <rect x="1" y="3" width="14" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+                            <path d="M4 7h8M4 10h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                            <circle cx="12.5" cy="10.5" r="2.5" fill="#e53935" />
+                            <path d="M11.5 10.5h2M12.5 9.5v2" stroke="white" stroke-width="1" stroke-linecap="round" />
+                        </svg>
+                        <span>Preview Fields</span>
+                    }
+                </button>
+
+                <button class="btn-o365 btn-primary" @onclick="DownloadRebuildPdf" disabled="@isProcessing">
+                    @if (isProcessing)
+                    {
+                        <span class="spinner"></span>
+                        <span>Processing…</span>
+                    }
+                    else
+                    {
+                        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V2h3v6H12L8 12z" /><path d="M2 13h12v1.5H2V13z" /></svg>
+                        <span>Export PDF</span>
+                    }
+                </button>
+                <button class="btn-o365 btn-ghost" @onclick="Reset">
+                    <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 8a7 7 0 1 0 7-7 .5.5 0 0 0 0 1A6 6 0 1 1 2 8H1zm6.5-5.5l-2 2 2 2V5a3 3 0 0 1 3 3H12a4 4 0 0 0-4-4V2.5z" /></svg>
+                    <span>New File</span>
+                </button>
+            </div>
+        }
+    </header>
+
+    <main class="app-main">
+        @if (!fields.Any())
+        {
+            <!-- Upload zone -->
+            <div class="upload-section">
+                <div class="upload-card @(isDragging ? "dragging" : "")"
+                     @ondragenter="OnDragEnter"
+                     @ondragleave="OnDragLeave"
+                     @ondragover:preventDefault="true"
+                     @ondrop="OnDrop">
+                    <div class="upload-icon">
+                        <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M24 4L24 32" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                            <path d="M14 14L24 4L34 14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                            <path d="M8 36V42H40V36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                        </svg>
+                    </div>
+                    <h2 class="upload-title">Upload PDF with AcroForm</h2>
+                    <p class="upload-sub">Drag and drop or click to select a PDF file</p>
+                    <label class="btn-o365 btn-primary upload-btn">
+                        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M9 1H4L2 3v10l2 2h8l2-2V5L9 1zm0 1.5L12.5 5H9V2.5zM4 13V3.5h3.5V6.5H11V13H4z" /></svg>
+                        Choose File
+                        <InputFile OnChange="HandleFileSelected" accept=".pdf" style="display:none;" />
+                    </label>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="error-banner">
+                            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 4h1.5v4.5h-1.5V5zm.75 7a.875.875 0 1 1 0-1.75A.875.875 0 0 1 8.75 12z" /></svg>
+                            @errorMessage
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Group review banner -->
+            @if (detectedGroups.Any())
+            {
+                <div class="group-banner">
+                    <div class="group-banner-info">
+                        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h5v2H2V3zm7 0h5v2H9V3zM2 7h5v2H2V7zm7 0h5v2H9V7z" /></svg>
+                        <span><strong>@detectedGroups.Count</strong> group(s) detected · <strong>@detectedGroups.Sum(g => g.ReferenceFieldIds.Count)</strong> fields will be merged as copies</span>
+                    </div>
+                    <div class="group-banner-actions">
+                        <button class="btn-o365 btn-sm btn-accept" @onclick="AcceptAllGroups">✓ Accept All</button>
+                        <button class="btn-o365 btn-sm btn-reject" @onclick="RejectAllGroups">✗ Clear All</button>
+                        <button class="btn-o365 btn-sm btn-ghost" @onclick="@(() => showGroupDetail = !showGroupDetail)">@(showGroupDetail ? "Hide" : "Review")</button>
+                    </div>
+                </div>
+                @if (showGroupDetail)
+                {
+                    <div class="group-review-panel">
+                        @foreach (var group in detectedGroups)
+                        {
+                            var primary = fields.FirstOrDefault(f => f.Id == group.PrimaryFieldId);
+                            <div class="group-review-card">
+                                <div class="group-review-header">
+                                    <span class="tag tag-role-primary">@group.GroupName</span>
+                                    <span class="confidence-badge conf-@(group.Confidence >= 0.8f ? "high" : group.Confidence >= 0.5f ? "med" : "low")">@(Math.Round(group.Confidence * 100))%</span>
+                                    <span class="group-reference-count">@group.ReferenceFieldIds.Count reference(s)</span>
+                                </div>
+                                <div class="group-review-reasons">
+                                    @foreach (var r in group.MatchReasons)
+                                    {
+                                        <span class="reason-tag">@r</span>
+                                    }
+                                </div>
+                                <div class="group-review-members">
+                                    <span class="member-primary" @onclick="@(() => { if (primary != null) SelectField(primary); })">⬤ @(primary?.PartialName ?? "?")</span>
+                                    @foreach (var referenceId in group.ReferenceFieldIds)
+                                    {
+                                        var reference = fields.FirstOrDefault(f => f.Id == referenceId);
+                                        if (reference != null)
+                                        {
+                                            <span class="member-reference">└ @reference.PartialName (@reference.Widgets.Count w)</span>
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+            <!-- Field editor -->
+            <div class="editor-layout">
+                <!-- Left: field list -->
+                <aside class="field-sidebar">
+                    <div class="sidebar-header">
+                        <div class="sidebar-title">
+                            <span>Fields</span>
+                            <span class="badge">@fields.Count</span>
+                        </div>
+                        <div class="sidebar-search">
+                            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.867-3.834zm-5.242 1.406a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z" /></svg>
+                            <input type="text" placeholder="Filter fields…" @bind="filterText" @bind:event="oninput" />
+                        </div>
+                    </div>
+                    <div class="field-list">
+                        @foreach (var field in FilteredFields)
+                        {
+                            <div class="field-item @(selectedField?.Id == field.Id ? "selected" : "") role-@field.Role.ToString().ToLower() @(field.IsDeleted ? "deleted" : "")"
+                                 @onclick="() => SelectField(field)">
+                                <div class="field-item-icon">
+                                    @GetFieldTypeIcon(field.FieldType)
+                                </div>
+                                <div class="field-item-body">
+                                    <div class="field-item-name" style="@(field.IsDeleted ? "text-decoration: line-through; opacity: 0.5;" : "")" title="@field.FullName">@field.PartialName</div>
+                                    <div class="field-item-meta">
+                                        <span class="tag tag-type">@field.FieldType</span>
+                                        <span class="tag tag-role-@field.Role.ToString().ToLower()">@field.Role</span>
+                                        @if (field.Role == FieldRole.Reference && !string.IsNullOrEmpty(field.ParentId))
+                                        {
+                                            var parent = fields.FirstOrDefault(f => f.Id == field.ParentId);
+                                            @if (parent != null)
+                                            {
+                                                <span class="tag tag-parent" title="Parent field">↑ @parent.PartialName</span>
+                                            }
+                                        }
+                                    </div>
+                                </div>
+                                <div class="field-item-page">@field.PageSummary</div>
+                            </div>
+                        }
+                    </div>
+                </aside>
+
+                <!-- Right: detail editor -->
+                <section class="field-detail">
+                    @if (selectedField == null)
+                    {
+                        <div class="no-selection">
+                            <svg viewBox="0 0 48 48" fill="none"><path d="M8 12h32M8 24h20M8 36h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                            <p>Select a field to edit its properties</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="detail-panel">
+                            <div class="detail-header">
+                                <h2 class="detail-title" style="@(selectedField.IsDeleted ? "text-decoration: line-through; opacity: 0.5;" : "")">@selectedField.PartialName</h2>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <span class="tag tag-type">@selectedField.FieldType</span>
+                                    <button class="btn-o365 @(selectedField.IsDeleted ? "btn-primary" : "btn-reject") btn-sm" @onclick="() => selectedField.IsDeleted = !selectedField.IsDeleted">
+                                        @(selectedField.IsDeleted ? "Restore" : "Delete")
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Tabs -->
+                            <div class="tab-bar">
+                                <button class="tab @(activeTab == "hierarchy" ? "active" : "")" @onclick="@(() => activeTab = "hierarchy")">Hierarchy</button>
+                                <button class="tab @(activeTab == "identity" ? "active" : "")" @onclick="@(() => activeTab = "identity")">Identity</button>
+                                @if (selectedField.Role != FieldRole.Reference)
+                                {
+                                    <button class="tab @(activeTab == "attributes" ? "active" : "")" @onclick="@(() => activeTab = "attributes")">Settings</button>
+                                }
+                                <button class="tab @(activeTab == "geometry" ? "active" : "")" @onclick="@(() => activeTab = "geometry")">Geometry</button>
+                            </div>
+
+                            <div class="tab-content">
+                                @if (activeTab == "hierarchy")
+                                {
+                                    <div class="form-section">
+                                        <label class="form-label">Field Role in Hierarchy</label>
+                                        <div class="role-cards">
+                                            <div class="role-card @(selectedField.Role == FieldRole.Standalone ? "selected" : "")"
+                                                 @onclick="@(() => SetRole(FieldRole.Standalone))">
+                                                <div class="role-icon">
+                                                    <svg viewBox="0 0 20 20" fill="currentColor"><rect x="4" y="6" width="12" height="8" rx="2" /></svg>
+                                                </div>
+                                                <div class="role-name">Standalone</div>
+                                                <div class="role-desc">Independent field, no parent/child relationship</div>
+                                            </div>
+                                            <div class="role-card @(selectedField.Role == FieldRole.Primary ? "selected" : "")"
+                                                 @onclick="@(() => SetRole(FieldRole.Primary))">
+                                                <div class="role-icon primary-icon">
+                                                    <svg viewBox="0 0 20 20" fill="currentColor"><rect x="2" y="4" width="16" height="7" rx="2" /><rect x="5" y="13" width="4" height="4" rx="1" /><rect x="11" y="13" width="4" height="4" rx="1" /></svg>
+                                                </div>
+                                                <div class="role-name">Primary (Parent)</div>
+                                                <div class="role-desc">Parent field — other fields become its references</div>
+                                            </div>
+                                            <div class="role-card @(selectedField.Role == FieldRole.Reference ? "selected" : "")"
+                                                 @onclick="@(() => SetRole(FieldRole.Reference))">
+                                                <div class="role-icon reference-icon">
+                                                    <svg viewBox="0 0 20 20" fill="currentColor"><rect x="2" y="2" width="16" height="5" rx="2" opacity="0.4" /><path d="M10 7v4M7 11h6" stroke="white" stroke-width="1.5" /><rect x="5" y="13" width="4" height="4" rx="1" /><rect x="11" y="13" width="4" height="4" rx="1" /></svg>
+                                                </div>
+                                                <div class="role-name">Reference</div>
+                                                <div class="role-desc">Absorbed as a copy into a Primary</div>
+                                            </div>
+                                        </div>
+
+                                        @if (selectedField.Role == FieldRole.Reference)
+                                        {
+                                            <div class="form-group mt-16">
+                                                <label class="form-label">Assign to Primary Field</label>
+                                                <select class="form-select" value="@selectedField.ParentId"
+                                                        @onchange="@(e => selectedField.ParentId = e.Value?.ToString())">
+                                                    <option value="">— Select parent —</option>
+                                                    @foreach (var prim in fields.Where(f => f.Role == FieldRole.Primary && f.Id != selectedField.Id))
+                                                    {
+                                                        <option value="@prim.Id">@prim.FullName</option>
+                                                    }
+                                                </select>
+                                                @if (string.IsNullOrEmpty(selectedField.ParentId))
+                                                {
+                                                    <span class="form-hint warning">No primary fields defined yet. Mark another field as Primary first.</span>
+                                                }
+                                            </div>
+                                        }
+
+                                        @if (selectedField.Role == FieldRole.Primary)
+                                        {
+                                            var myReferences = fields.Where(f => f.Role == FieldRole.Reference && f.ParentId == selectedField.Id).ToList();
+                                            <div class="references-summary mt-16">
+                                                <div class="form-label">Current References (@myReferences.Count)</div>
+                                                @if (myReferences.Any())
+                                                {
+                                                    <ul class="references-list">
+                                                        @foreach (var r in myReferences)
+                                                        {
+                                                            <li>
+                                                                <svg viewBox="0 0 12 12" fill="currentColor"><path d="M3 2v4h6V2H3zm0 5v3h2V7H3zm3 0v3h2V7H3zm3 0v3h2V7H6zm3 0v3h2V7H9z" /></svg>
+                                                                @r.FullName
+                                                                <button class="btn-icon-sm" @onclick="@(() => RemoveReference(r))">×</button>
+                                                            </li>
+                                                        }
+                                                    </ul>
+                                                }
+                                                else
+                                                {
+                                                    <p class="form-hint">No references assigned yet. Select other fields and set them as References of this field.</p>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+
+                                @if (activeTab == "identity")
+                                {
+                                    <div class="form-grid">
+                                        <div class="form-group">
+                                            <label class="form-label">Full Name</label>
+                                            <input class="form-input" @bind="selectedField.FullName" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Partial Name</label>
+                                            <input class="form-input" @bind="selectedField.PartialName" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Alternate Name (Tooltip)</label>
+                                            <input class="form-input" @bind="selectedField.AlternateName" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Mapping Name</label>
+                                            <input class="form-input" @bind="selectedField.MappingName" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Value</label>
+                                            <input class="form-input" @bind="selectedField.Value" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Default Value</label>
+                                            <input class="form-input" @bind="selectedField.DefaultValue" />
+                                        </div>
+                                    </div>
+                                }
+
+                                @if (activeTab == "attributes")
+                                {
+                                    <div class="form-section">
+                                        <div class="flag-grid">
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">Required</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsRequired" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">Multiline</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsMultiline" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">Password</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsPassword" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">File Select</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsFileSelect" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">Comb</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsComb" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">No Spell Check</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsDoNotSpellCheck" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                            <label class="toggle-row">
+                                                <span class="toggle-label">No Scroll</span>
+                                                <div class="toggle-wrap">
+                                                    <input type="checkbox" @bind="selectedField.IsDoNotScroll" />
+                                                    <span class="toggle-slider"></span>
+                                                </div>
+                                            </label>
+                                        </div>
+
+                                        <div class="form-group mt-16">
+                                            <label class="form-label">Max Length</label>
+                                            <input type="number" class="form-input narrow" @bind="selectedField.MaxLength" min="0" />
+                                            <span class="form-hint">0 = unlimited</span>
+                                        </div>
+
+                                        <div class="divider mt-16 mb-16"></div>
+                                        <h4 class="section-title">Field Defaults (Shared)</h4>
+                                        
+                                        <div class="form-grid">
+                                            <div class="form-group">
+                                                <label class="form-label">Default Font</label>
+                                                <input type="text" class="form-input" @bind="selectedField.FontName" placeholder="e.g. Helvetica" />
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Default Size</label>
+                                                <input type="number" class="form-input" @bind="selectedField.FontSize" step="0.5" />
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Default Justification</label>
+                                                <select class="form-select" @bind="selectedField.Justification">
+                                                    <option>Left</option>
+                                                    <option>Center</option>
+                                                    <option>Right</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+
+                                @if (activeTab == "geometry")
+                                {
+                                    @if (selectedField.Role == FieldRole.Reference)
+                                    {
+                                        <div class="inheritance-notice appearance-notice">
+                                            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 4h1.5v4.5h-1.5V5zm.75 7a.875.875 0 1 1 0-1.75A.875.875 0 0 1 8.75 12z" /></svg>
+                                            <span>Settings here will <strong>override</strong> the Primary field's default appearance for this specific reference.</span>
+                                        </div>
+                                    }
+
+                                    <div class="geo-info-bar">
+                                        PDF coordinate origin is at <strong>bottom-left</strong> of each page. This field has <strong>@selectedField.Widgets.Count</strong> widget placement@(selectedField.Widgets.Count != 1 ? "s" : "").
+                                    </div>
+
+                                    @if (!selectedField.Widgets.Any())
+                                    {
+                                        <p class="form-hint mt-16">No widget placements found for this field.</p>
+                                    }
+                                    else
+                                    {
+                                        @for (int wi = 0; wi < selectedField.Widgets.Count; wi++)
+                                        {
+                                            var w = selectedField.Widgets[wi];
+                                            var widgetIndex = wi; // capture for lambda
+                                            <div class="widget-placement-card">
+                                                <div class="widget-placement-header">
+                                                    <span class="widget-placement-label">
+                                                        <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" /><rect x="3" y="3" width="8" height="8" rx="1" opacity=".3" /></svg>
+                                                        Widget @(widgetIndex + 1) of @selectedField.Widgets.Count
+                                                    </span>
+                                                    <span class="widget-page-badge">Page @w.PageNumber</span>
+                                                    @if (selectedField.Widgets.Count > 1)
+                                                    {
+                                                        <button class="btn-icon-sm" title="Remove this widget placement"
+                                                                @onclick="@(() => selectedField.Widgets.RemoveAt(widgetIndex))">
+                                                            ×
+                                                        </button>
+                                                    }
+                                                </div>
+                                                <div class="form-grid">
+                                                    <div class="form-group">
+                                                        <label class="form-label">Page</label>
+                                                        <input type="number" class="form-input narrow" @bind="w.PageNumber" min="1" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">X (left)</label>
+                                                        <input type="number" class="form-input narrow" @bind="w.X" step="0.5" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Y (bottom)</label>
+                                                        <input type="number" class="form-input narrow" @bind="w.Y" step="0.5" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Width</label>
+                                                        <input type="number" class="form-input narrow" @bind="w.Width" step="0.5" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Font</label>
+                                                        <input type="text" class="form-input" @bind="w.FontName" placeholder="Inherit" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Size</label>
+                                                        <input type="number" class="form-input" @bind="w.FontSize" step="0.5" min="0" />
+                                                        <span class="form-hint">0 = inherit</span>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Align</label>
+                                                        <select class="form-select" @bind="w.Justification">
+                                                            <option value="">Inherit</option>
+                                                            <option>Left</option>
+                                                            <option>Center</option>
+                                                            <option>Right</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Text Color</label>
+                                                        <input type="color" class="form-input color-picker" @bind="w.TextColor" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">BG Color</label>
+                                                        <input type="color" class="form-input color-picker" @bind="w.BackgroundColor" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Border Color</label>
+                                                        <input type="color" class="form-input color-picker" @bind="w.BorderColor" />
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label class="form-label">Border W.</label>
+                                                        <input type="number" class="form-input" @bind="w.BorderWidth" min="0" />
+                                                    </div>
+                                                    <div class="form-group" style="justify-content: flex-end; padding-bottom: 5px; grid-column: span 2;">
+                                                        <label class="toggle-row" style="padding: 0; gap: 8px;">
+                                                            <span class="toggle-label" style="font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--neutral-130);">Read Only</span>
+                                                            <div class="toggle-wrap" style="transform: scale(0.8); transform-origin: right;">
+                                                                <input type="checkbox" @bind="w.IsReadOnly" />
+                                                                <span class="toggle-slider"></span>
+                                                            </div>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+
+                                        <button class="btn-o365 btn-add-widget" @onclick="AddWidgetPlacement">
+                                            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+                                            Add Widget Placement
+                                        </button>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }
+                </section>
+            </div>
+
+            <!-- Hierarchy tree overview -->
+            <div class="hierarchy-overview">
+                <div class="overview-header">
+                    <span>Hierarchy Overview</span>
+                    <span class="badge">
+                        @fields.Count(f => f.Role == FieldRole.Primary) Primary ·
+                        @fields.Count(f => f.Role == FieldRole.Reference) References ·
+                        @fields.Count(f => f.Role == FieldRole.Standalone) Standalone
+                    </span>
+                </div>
+                <div class="tree-container">
+                    @foreach (var primary in fields.Where(f => f.Role == FieldRole.Primary))
+                    {
+                        <div class="tree-primary">
+                            <div class="tree-node primary-node" @onclick="@(() => SelectField(primary))">
+                                <svg viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="2" width="10" height="4" rx="1" /><rect x="2" y="8" width="3" height="3" rx="0.5" /><rect x="7" y="8" width="3" height="3" rx="0.5" /></svg>
+                                @primary.PartialName
+                                <span class="tag tag-primary-sm">Primary</span>
+                            </div>
+                            @foreach (var reference in fields.Where(f => f.Role == FieldRole.Reference && f.ParentId == primary.Id))
+                            {
+                                <div class="tree-reference-node" @onclick="@(() => SelectField(reference))">
+                                    <span class="tree-connector">└─</span>
+                                    <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="3" width="8" height="6" rx="1" /></svg>
+                                    @reference.PartialName
+                                </div>
+                            }
+                        </div>
+                    }
+                    @foreach (var f in fields.Where(f => f.Role == FieldRole.Standalone))
+                    {
+                        <div class="tree-node standalone-node" @onclick="@(() => SelectField(f))">
+                            <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="3" width="8" height="6" rx="1" /></svg>
+                            @f.PartialName
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </main>
+</div>
+
+@code {
+    private List<AcroFieldModel> fields = new();
+    private AcroFieldModel? selectedField;
+    private string activeTab = "hierarchy";
+    private string filterText = string.Empty;
+    private bool isDragging = false;
+    private bool isProcessing = false;
+    private bool isUploading = false;
+    private string? errorMessage;
+    private byte[]? originalPdfBytes;
+    private string originalFileName = "output.pdf";
+
+    // ── Auto-grouping state ──
+    private List<FieldGroup> detectedGroups = new();
+    private bool showGroupDetail = false;
+
+    private IEnumerable<AcroFieldModel> FilteredFields =>
+        string.IsNullOrWhiteSpace(filterText)
+            ? fields
+            : fields.Where(f =>
+                f.PartialName.Contains(filterText, StringComparison.OrdinalIgnoreCase) ||
+                f.FullName.Contains(filterText, StringComparison.OrdinalIgnoreCase));
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        errorMessage = null;
+        var file = e.File;
+        if (!file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            errorMessage = "Please select a valid PDF file.";
+            return;
+        }
+
+        try
+        {
+            isUploading = true;
+            StateHasChanged();
+            await Task.Delay(100); // Give UI time to show spinner
+
+            using var ms = new MemoryStream();
+            await file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024).CopyToAsync(ms);
+            originalPdfBytes = ms.ToArray();
+            originalFileName = file.Name;
+            ms.Position = 0;
+            fields = FormService.ExtractFields(ms);
+            detectedGroups.Clear();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to parse PDF: {ex.Message}";
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnDragEnter() => isDragging = true;
+    private void OnDragLeave() => isDragging = false;
+
+    private async Task OnDrop(DragEventArgs e)
+    {
+        isDragging = false;
+    }
+
+    private void SelectField(AcroFieldModel field)
+    {
+        selectedField = field;
+        if (field.Role == FieldRole.Reference)
+        {
+            activeTab = "geometry";
+        }
+        else if (activeTab == "hierarchy")
+        {
+            // Keep hierarchy tab if already there
+        }
+        else
+        {
+            activeTab = "attributes"; // Default to settings for primaries
+        }
+        showGroupDetail = false;
+    }
+
+    private void SetRole(FieldRole role)
+    {
+        if (selectedField == null) return;
+        
+        // If current was Primary and changing to Standalone, orphan all children
+        if (selectedField.Role == FieldRole.Primary && role == FieldRole.Standalone)
+        {
+            foreach (var f in fields.Where(f => f.ParentId == selectedField.Id))
+            {
+                f.Role = FieldRole.Standalone;
+                f.ParentId = null;
+                f.IsManuallyGrouped = true;
+            }
+        }
+
+        selectedField.Role = role;
+        selectedField.IsManuallyGrouped = true;
+        if (role != FieldRole.Reference)
+            selectedField.ParentId = null;
+    }
+
+    private void AddWidgetPlacement()
+    {
+        if (selectedField == null) return;
+        var last = selectedField.Widgets.LastOrDefault();
+        selectedField.Widgets.Add(new WidgetPlacement
+        {
+            PageNumber = last != null ? last.PageNumber + 1 : 1,
+            X = last?.X ?? 0,
+            Y = last?.Y ?? 0,
+            Width = last?.Width ?? 100,
+            Height = last?.Height ?? 14,
+        });
+    }
+
+    private void RemoveReference(AcroFieldModel reference)
+    {
+        reference.Role = FieldRole.Standalone;
+        reference.ParentId = null;
+        reference.IsManuallyGrouped = true;
+    }
+
+    // ── Auto-grouping ──
+
+    private void RunAutoGroup()
+    {
+        detectedGroups = GroupService.DetectGroups(fields);
+        GroupService.ApplyGroups(fields, detectedGroups);
+        showGroupDetail = detectedGroups.Any();
+    }
+
+    private void AutoSetPrimaries()
+    {
+        GroupService.AutoSetPrimaries(fields);
+        detectedGroups = GroupService.DetectGroups(fields);
+        showGroupDetail = false;
+    }
+
+    private void AutoAddReferences()
+    {
+        GroupService.AutoAddReferences(fields);
+        detectedGroups = GroupService.DetectGroups(fields);
+        showGroupDetail = false;
+    }
+
+    private void AcceptAllGroups()
+    {
+        foreach (var f in fields.Where(f => f.Role != FieldRole.Standalone))
+            f.IsManuallyGrouped = true;
+        showGroupDetail = false;
+    }
+
+    private void RejectAllGroups()
+    {
+        foreach (var f in fields)
+        {
+            f.Role = FieldRole.Standalone;
+            f.ParentId = null;
+            f.GroupConfidence = null;
+            f.IsManuallyGrouped = false;
+        }
+        detectedGroups.Clear();
+        showGroupDetail = false;
+    }
+
+    // ── Export / Reset ──
+
+    private async Task DownloadRebuildPdf()
+    {
+        if (originalPdfBytes == null) return;
+        isProcessing = true;
+        StateHasChanged();
+        try
+        {
+            using var ms = new MemoryStream(originalPdfBytes);
+            var result = FormService.RebuildAcroForm(ms, fields);
+            var base64 = Convert.ToBase64String(result);
+            var outName = Path.GetFileNameWithoutExtension(originalFileName) + "_rebuilt.pdf";
+            await JS.InvokeVoidAsync("downloadBase64", base64, outName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task DownloadFieldPreview()
+    {
+        if (originalPdfBytes == null) return;
+        isProcessing = true;
+        StateHasChanged();
+        try
+        {
+            // Step 1: rebuild the PDF structure (applies any grouping / widget changes)
+            using var rebuildStream = new MemoryStream(originalPdfBytes);
+            var rebuilt = FormService.RebuildAcroForm(rebuildStream, fields);
+ 
+            // Step 2: fill all editable text fields with their name in red
+            using var filledStream = new MemoryStream(rebuilt);
+            var preview = FormService.FillWithFieldNames(filledStream);
+ 
+            var base64 = Convert.ToBase64String(preview);
+            var outName = Path.GetFileNameWithoutExtension(originalFileName) + "_field_preview.pdf";
+            await JS.InvokeVoidAsync("downloadBase64", base64, outName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Preview failed: {ex.Message}";
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private void Reset()
+    {
+        fields.Clear();
+        selectedField = null;
+        originalPdfBytes = null;
+        errorMessage = null;
+        detectedGroups.Clear();
+        showGroupDetail = false;
+    }
+
+    private void OnFlagChanged(string flagName, bool value)
+    {
+        if (selectedField == null) return;
+
+        var affected = GetGroupMembers(selectedField);
+        foreach (var f in affected)
+        {
+            switch (flagName)
+            {
+                case "Required": f.IsRequired = value; break;
+                case "ReadOnly": f.IsReadOnly = value; break;
+                case "Multiline": f.IsMultiline = value; break;
+                case "Password": f.IsPassword = value; break;
+                case "FileSelect": f.IsFileSelect = value; break;
+                case "Comb": f.IsComb = value; break;
+                case "NoSpellCheck": f.IsDoNotSpellCheck = value; break;
+                case "NoScroll": f.IsDoNotScroll = value; break;
+            }
+        }
+    }
+
+    private void OnAttributeChanged(string attrName, string? value)
+    {
+        if (selectedField == null) return;
+        var affected = GetGroupMembers(selectedField);
+        foreach (var f in affected)
+        {
+            switch (attrName)
+            {
+                case "MaxLen": f.MaxLength = int.TryParse(value, out var m) ? m : 0; break;
+                case "Justification": f.Justification = value ?? "Left"; break;
+            }
+        }
+    }
+
+    private IEnumerable<AcroFieldModel> GetGroupMembers(AcroFieldModel field)
+    {
+        if (field.Role == FieldRole.Primary)
+            return fields.Where(f => f.ParentId == field.Id).Concat(new[] { field });
+            
+        if (field.Role == FieldRole.Reference && !string.IsNullOrEmpty(field.ParentId))
+        {
+            var pId = field.ParentId;
+            return fields.Where(f => f.Id == pId || f.ParentId == pId);
+        }
+        
+        return new[] { field };
+    }
+
+    private MarkupString GetFieldTypeIcon(AcroFieldType type) => type switch
+    {
+        AcroFieldType.Text => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='1' y='3' width='12' height='8' rx='1.5' fill='none' stroke='currentColor' stroke-width='1.2'/><path d='M4 7h6M7 5v4' stroke='currentColor' stroke-width='1.2' stroke-linecap='round'/></svg>",
+        AcroFieldType.CheckBox => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='1' y='1' width='12' height='12' rx='2' fill='none' stroke='currentColor' stroke-width='1.2'/><path d='M4 7l2 2 4-4' stroke='currentColor' stroke-width='1.4' fill='none' stroke-linecap='round'/></svg>",
+        AcroFieldType.RadioButton => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><circle cx='7' cy='7' r='6' fill='none' stroke='currentColor' stroke-width='1.2'/><circle cx='7' cy='7' r='2.5'/></svg>",
+        AcroFieldType.ComboBox => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='1' y='3' width='12' height='8' rx='1.5' fill='none' stroke='currentColor' stroke-width='1.2'/><path d='M9.5 6.5l-2 2-2-2' stroke='currentColor' stroke-width='1.2' fill='none'/></svg>",
+        AcroFieldType.ListBox => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='1' y='2' width='12' height='10' rx='1.5' fill='none' stroke='currentColor' stroke-width='1.2'/><path d='M3 5h8M3 7.5h8M3 10h5' stroke='currentColor' stroke-width='1.2' stroke-linecap='round'/></svg>",
+        AcroFieldType.Button => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='1' y='4' width='12' height='6' rx='3' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>",
+        AcroFieldType.Signature => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><path d='M2 11c1-3 3-7 4-7s1 4 2 4 2-3 3-3' stroke='currentColor' stroke-width='1.2' fill='none' stroke-linecap='round'/></svg>",
+        _ => (MarkupString)"<svg viewBox='0 0 14 14' fill='currentColor'><rect x='2' y='2' width='10' height='10' rx='2' fill='none' stroke='currentColor' stroke-width='1.2'/></svg>"
+    };
+}
